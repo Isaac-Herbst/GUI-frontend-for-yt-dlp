@@ -54,7 +54,7 @@ def start_download(playlist_url, output_dir, cookies_file, download_format):
             cookies_file = converted_cookies_file
 
     # Build the yt-dlp command based on the selected format
-    command = ['yt-dlp', '--continue', '-o', f'{output_dir}/%(title)s.%(ext)s']
+    command = ['yt-dlp', '--continue', '-o', f'{output_dir}/%(title)s.%(ext)s', '--age-limit', '100']
 
     # Video formats
     video_formats = ["mp4", "mkv", "webm", "flv"]
