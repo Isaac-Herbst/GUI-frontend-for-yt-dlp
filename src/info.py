@@ -27,8 +27,8 @@ def show_info(root):
     # Add program information
     info_text = """
     yt-dlp GUI Frontend
-    Version 1.0
-    Authored by Isaac Herbst, last updated 02/18/2025
+    Version 1.1
+    Authored by Isaac Herbst, last updated 02/26/2025
 
     Dependencies:
     - Python 3.x
@@ -55,6 +55,7 @@ def show_info(root):
     Relevant bugs/program quirks:
     - Pausing the output with Ctrl+C on the output terminal will pause the download, but that command is not stored in the terminal.
     - Closing this (info) window will not bring focus back to the main window.
+    - For formats not mp4/mp3, currently format merging does not work. It defaults to mp4/mp3.
     - If the machine this runs on has insufficient storage for everything, there isn't any error handling for that.
     """
 

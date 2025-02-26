@@ -1,0 +1,36 @@
+# Ignore PyInstaller build files
+/build/
+/yt-dlp-GUI.spec
+
+# Ignore PyInstaller output (executable)
+/yt-dlp-GUI.exe
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+
+# Ignore virtual environment files
+venv/
+env/
+*.env
+
+# Ignore system-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore log files
+*.log
+
+# Ignore test files
+/test/
+/tests/
+
+# Ignore other temporary files
+*.tmp
+*.bak

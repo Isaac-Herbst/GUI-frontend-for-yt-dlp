@@ -6,7 +6,6 @@ from download_logic import start_download
 import sys
 import os
 
-# Function to get the correct path for bundled files
 def resource_path(relative_path):
     """Get the absolute path to a resource, works for dev and for PyInstaller."""
     try:
@@ -23,14 +22,17 @@ root.title("yt-dlp Download Manager")
 
 # Set custom icon
 try:
-    icon_path = resource_path("logo.png")  # Use the correct path for the bundled file
+    #building .exe line
+    #icon_path = resource_path(os.path.join("img", "logo.png"))  # Use the correct path for the bundled file
+    #source
+    icon_path = resource_path("src/logo.png")
     icon_image = PhotoImage(file=icon_path)
     root.iconphoto(True, icon_image)
 except Exception as e:
     print(f"Failed to load custom icon: {e}")
 
 # Playlist URL
-tk.Label(root, text="Playlist URL:").grid(row=0, column=0, padx=10, pady=5)
+tk.Label(root, text="Video/Playlist URL:").grid(row=0, column=0, padx=10, pady=5)
 url_entry = tk.Entry(root, width=50)
 url_entry.grid(row=0, column=1, padx=10, pady=5)
 

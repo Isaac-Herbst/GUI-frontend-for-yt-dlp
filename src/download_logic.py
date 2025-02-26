@@ -38,7 +38,7 @@ def convert_to_netscape(file_path):
         messagebox.showerror("Error", f"Failed to convert cookies: {e}")
         return None
 
-def start_download(playlist_url, output_dir, cookies_file):
+def start_download(playlist_url, output_dir, cookies_file, download_format):
     if not playlist_url or not output_dir:
         messagebox.showerror("Error", "Please fill in all required fields.")
         return
@@ -53,14 +53,18 @@ def start_download(playlist_url, output_dir, cookies_file):
                 return  # Conversion failed
             cookies_file = converted_cookies_file
 
-    command = [
-        'yt-dlp',
-        '--continue',
-        '-f', 'bestvideo+bestaudio',
-        '--merge-output-format', 'mp4',
-        '-o', f'{output_dir}/%(title)s.%(ext)s',
-        '--age-limit', '100'
-    ]
+    # Build the yt-dlp command based on the selected format
+    command = ['yt-dlp', '--continue', '-o', f'{output_dir}/%(title)s.%(ext)s']
+
+    # Video formats
+    video_formats = ["mp4", "mkv", "webm", "flv"]
+    if download_format in video_formats:
+        # Default to mp4 if merging fails
+        command.extend(['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mp4'])
+    # Audio formats
+    else:
+        # Default to mp3 if merging fails
+        command.extend(['-x', '--audio-format', 'mp3'])
 
     if cookies_file:
         command.extend(['--cookies', cookies_file])
