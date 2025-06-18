@@ -9,14 +9,70 @@ import json
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads/cookies'
+DOWNLOAD_FOLDER = '/downloads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['DOWNLOAD_FOLDER'] = DOWNLOAD_FOLDER
 
 log_queue = Queue()
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/browse_directories', methods=['GET'])
+def browse_directories():
+    """Browse server directories for output selection"""
+    path = request.args.get('path', app.config['DOWNLOAD_FOLDER'])
+    try:
+        if not os.path.exists(path):
+            return jsonify({'error': 'Path does not exist'}), 400
+        
+        items = []
+        for item in os.listdir(path):
+            item_path = os.path.join(path, item)
+            if os.path.isdir(item_path):
+                items.append({
+                    'name': item,
+                    'path': item_path,
+                    'type': 'directory'
+                })
+        
+        parent_path = os.path.dirname(path) if path != '/' else None
+        return jsonify({
+            'current_path': path,
+            'parent_path': parent_path,
+            'items': sorted(items, key=lambda x: x['name'].lower())
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/validate_url', methods=['POST'])
+def validate_url():
+    """Validate if URL is a supported video platform"""
+    data = request.get_json()
+    url = data.get('url', '')
+    
+    if not url:
+        return jsonify({'valid': False, 'error': 'No URL provided'})
+    
+    # Basic URL validation
+    if not re.match(r'^https?://', url):
+        return jsonify({'valid': False, 'error': 'Invalid URL format'})
+    
+    # Check if it's a supported platform (basic check)
+    supported_domains = [
+        'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com',
+        'twitch.tv', 'facebook.com', 'instagram.com', 'tiktok.com'
+    ]
+    
+    is_supported = any(domain in url.lower() for domain in supported_domains)
+    
+    return jsonify({
+        'valid': is_supported,
+        'is_youtube': 'youtube.com' in url.lower() or 'youtu.be' in url.lower()
+    })
 
 @app.route('/upload_cookies', methods=['POST'])
 def upload_cookies():
@@ -83,11 +139,16 @@ def start_download():
     data = request.get_json()
     url = data.get('url')
     format_ = data.get('format')
-    output_dir = data.get('output_dir') or '/downloads'
+    output_dir = data.get('output_dir')
     cookies_path = data.get('cookies_path')
+    
+    # New download options
+    download_options = data.get('download_options', {})
 
-    if not url or 'output_dir' not in data:
+    if not url or not output_dir:
         return jsonify({'error': 'URL and output directory required'}), 400
+    
+    output_dir = output_dir or app.config['DOWNLOAD_FOLDER']
 
     if not re.match(r'^https?://', url):
         return jsonify({'error': 'Invalid URL format'}), 400
@@ -95,12 +156,54 @@ def start_download():
     os.makedirs(output_dir, exist_ok=True)
 
     command = ['yt-dlp', '--continue', '-o', f'{output_dir}/%(title)s.%(ext)s']
-    if format_ in ['mp4', 'mkv', 'webm', 'flv']:
-        command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mp4']
-    else:
-        command += ['-x', '--audio-format', 'mp3']
+    
+    # Handle different formats
+    if format_ in ['mp4', 'mkv', 'webm', 'flv', 'avi']:
+        if format_ == 'mp4':
+            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mp4']
+        elif format_ == 'mkv':
+            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mkv']
+        elif format_ == 'webm':
+            command += ['-f', 'bestvideo+bestaudio/best[ext=webm]']
+        elif format_ == 'flv':
+            command += ['-f', 'best[ext=flv]']
+        elif format_ == 'avi':
+            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'avi']
+    else:  # Audio formats
+        command += ['-x']
+        if format_ == 'mp3':
+            command += ['--audio-format', 'mp3']
+        elif format_ == 'ogg':
+            command += ['--audio-format', 'vorbis']
+        elif format_ == 'aac':
+            command += ['--audio-format', 'aac']
+        elif format_ == 'flac':
+            command += ['--audio-format', 'flac']
+        elif format_ == 'm4a':
+            command += ['--audio-format', 'm4a']
+
+    # Add download options
+    if download_options.get('description'):
+        command += ['--write-description']
+    
+    if download_options.get('comments'):
+        command += ['--write-comments']
+    
+    if download_options.get('info_json'):
+        command += ['--write-info-json']
+    
+    if download_options.get('subtitles'):
+        command += ['--write-subs', '--write-auto-subs']
+    
+    if download_options.get('thumbnail'):
+        command += ['--write-thumbnail']
+
     if cookies_path:
         command += ['--cookies', cookies_path]
+
+    custom_flags = data.get('custom_flags', [])
+    if isinstance(custom_flags, list):
+        command += custom_flags
     command.append(url)
 
     def run_command():
@@ -117,7 +220,7 @@ def start_download():
                     log_queue.put(f"PROGRESS::{percent}::{speed}::{eta}")
                     last_percent = int(percent)
             else:
-                if "[ffmpeg]" in line or "Destination" in line:
+                if "[ffmpeg]" in line or "Destination" in line or "[info]" in line:
                     log_queue.put(f"INFO::{line.strip()}")
         log_queue.put('[DONE]')
 
