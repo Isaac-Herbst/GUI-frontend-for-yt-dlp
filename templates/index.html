@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>yt-dlp Web GUI</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: auto; }
+        input, select, button { width: 100%; margin: 5px 0; padding: 10px; }
+        pre { background-color: #eee; padding: 10px; height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h2>yt-dlp Download Manager</h2>
+
+    <label>Video/Playlist URL:</label>
+    <input type="text" id="url">
+
+    <label>Download Format:</label>
+    <select id="format">
+        <option value="mp4">mp4</option>
+        <option value="mkv">mkv</option>
+        <option value="mp3">mp3</option>
+    </select>
+
+    <label>Output Directory (on server):</label>
+    <input type="text" id="output_dir" placeholder="/path/to/folder">
+    <input type="file" id="dir_picker" webkitdirectory directory style="display:none;">
+    <button onclick="pickFolder()">Browse Folder</button>
+
+    <label>Cookies File:</label>
+    <input type="file" id="cookies_file">
+    <button onclick="uploadCookies()">Upload Cookies</button>
+    <p id="cookies_path"></p>
+
+    <button onclick="startDownload()">Start Download</button>
+
+    <h3>Download Log</h3>
+    <div>
+        <label>Progress:</label>
+        <div style="width:100%; background:#ddd;">
+            <div id="progress-bar" style="width:0%; background:green; color:white; padding:5px 0; text-align:center;">0%</div>
+        </div>
+        <p id="speed_eta"></p>
+        <pre id="log" style="margin-top:10px;"></pre>
+    </div>
+
+
+    <script>
+        let cookiesPath = '';
+
+        async function uploadCookies() {
+            const fileInput = document.getElementById('cookies_file');
+            const formData = new FormData();
+            formData.append('cookies_file', fileInput.files[0]);
+
+            const res = await fetch('/upload_cookies', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await res.json();
+            if (data.path) {
+                cookiesPath = data.path;
+                document.getElementById('cookies_path').innerText = `Uploaded to: ${data.path}`;
+            } else {
+                alert(data.error);
+            }
+        }
+
+        function pickFolder() {
+            const input = document.getElementById("dir_picker");
+            input.click();
+            input.addEventListener("change", () => {
+                const files = input.files;
+                if (files.length > 0) {
+                    const path = files[0].webkitRelativePath.split('/')[0];
+                    document.getElementById("output_dir").value = "/" + path;
+                }
+            }, { once: true });
+        }
+
+        async function startDownload() {
+            const url = document.getElementById('url').value;
+            const format = document.getElementById('format').value;
+            const output_dir = document.getElementById('output_dir').value;
+
+            const res = await fetch('/start_download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, format, output_dir, cookies_path: cookiesPath })
+            });
+
+            const data = await res.json();
+            alert(data.message || data.error);
+            if (data.message) {
+                const log = document.getElementById("log");
+                const evtSource = new EventSource('/stream_logs');
+                log.textContent = '';
+                evtSource.onmessage = function(e) {
+                    if (e.data === '[DONE]') {
+                        evtSource.close();
+                        document.getElementById('speed_eta').innerText = 'Download complete!';
+                        return;
+                    }
+
+                    if (e.data.startsWith("PROGRESS::")) {
+                        const [_, percent, speed, eta] = e.data.split("::");
+                        const bar = document.getElementById("progress-bar");
+                        bar.style.width = `${percent}%`;
+                        bar.innerText = `${Math.floor(percent)}%`;
+                        document.getElementById("speed_eta").innerText = `Speed: ${speed}, ETA: ${eta}`;
+                    } else if (e.data.startsWith("INFO::")) {
+                        const log = document.getElementById("log");
+                        log.textContent += e.data.replace("INFO::", "") + "\n";
+                        log.scrollTop = log.scrollHeight;
+                    }
+                };
+            }
+        }
+    </script>
+</body>
+</html>

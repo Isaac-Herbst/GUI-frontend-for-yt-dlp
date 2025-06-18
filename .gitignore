@@ -27,10 +27,6 @@ Thumbs.db
 # Ignore log files
 *.log
 
-# Ignore test files
-/test/
-/tests/
-
 # Ignore other temporary files
 *.tmp
 *.bak
