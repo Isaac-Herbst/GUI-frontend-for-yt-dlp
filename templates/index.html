@@ -93,6 +93,10 @@
                     <input type="checkbox" id="opt-thumbnail">
                     <label for="opt-thumbnail">Save Thumbnail</label>
                 </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="opt-sponsorblock">
+                    <label for="opt-sponsorblock">Remove SponsorBlock segments</label>
+                </div>
             </div>
         </div>
     </div>
@@ -125,6 +129,7 @@
         let currentPath = '/downloads';
         let urlValid = false;
         let isYoutube = false;
+        let isPlaylist = false;
 
         async function uploadCookies() {
             const fileInput = document.getElementById('cookies_file');
@@ -203,6 +208,7 @@
                 statusDiv.style.display = 'none';
                 optionsDiv.style.display = 'none';
                 urlValid = false;
+                isPlaylist = false;
                 return;
             }
 
@@ -218,9 +224,14 @@
                 
                 if (data.valid) {
                     statusDiv.className = 'url-status url-valid';
-                    statusDiv.textContent = 'Valid URL detected';
+                    let statusText = 'Valid URL detected';
+                    if (data.is_playlist) {
+                        statusText += ' Playlist';
+                    }
+                    statusDiv.textContent = statusText;
                     urlValid = true;
                     isYoutube = data.is_youtube;
+                    isPlaylist = data.is_playlist;
                     
                     if (isYoutube) {
                         optionsDiv.style.display = 'block';
@@ -229,6 +240,7 @@
                     statusDiv.className = 'url-status url-invalid';
                     statusDiv.textContent = data.error || 'Invalid or unsupported URL';
                     urlValid = false;
+                    isPlaylist = false;
                     optionsDiv.style.display = 'none';
                 }
             } catch (error) {
@@ -236,6 +248,7 @@
                 statusDiv.className = 'url-status url-invalid';
                 statusDiv.textContent = 'Error validating URL';
                 urlValid = false;
+                isPlaylist = false;
                 optionsDiv.style.display = 'none';
             }
         }
@@ -309,6 +322,7 @@
                 downloadOptions.info_json = document.getElementById('opt-info').checked;
                 downloadOptions.subtitles = document.getElementById('opt-subtitles').checked;
                 downloadOptions.thumbnail = document.getElementById('opt-thumbnail').checked;
+                downloadOptions.sponsorblock = document.getElementById('opt-sponsorblock').checked;
             }
 
             const res = await fetch('/start_download', {
@@ -320,6 +334,7 @@
                     output_dir, 
                     cookies_path: cookiesPath,
                     download_options: downloadOptions,
+                    is_playlist: isPlaylist,
                     custom_flags: Array.isArray(window.customFlags) ? window.customFlags : []
                 })
             });

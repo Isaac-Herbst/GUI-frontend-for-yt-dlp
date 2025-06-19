@@ -1,3 +1,3 @@
 #!/bin/bash
 echo "Building Docker image..."
-docker build -t validation-preedit-codebase .
+docker build -t validation-rewrite-codebase .

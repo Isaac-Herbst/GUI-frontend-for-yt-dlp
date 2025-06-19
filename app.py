@@ -69,9 +69,16 @@ def validate_url():
     
     is_supported = any(domain in url.lower() for domain in supported_domains)
     
+    # Check if URL appears to be a playlist
+    is_playlist = ('playlist' in url.lower() or 
+                   'list=' in url.lower() or
+                   '/sets/' in url.lower() or  # SoundCloud sets
+                   '/albums/' in url.lower())  # Various platforms
+    
     return jsonify({
         'valid': is_supported,
-        'is_youtube': 'youtube.com' in url.lower() or 'youtu.be' in url.lower()
+        'is_youtube': 'youtube.com' in url.lower() or 'youtu.be' in url.lower(),
+        'is_playlist': is_playlist
     })
 
 @app.route('/upload_cookies', methods=['POST'])
@@ -144,9 +151,18 @@ def start_download():
     
     # New download options
     download_options = data.get('download_options', {})
+    is_playlist = data.get('is_playlist', False)
 
     if not url or not output_dir:
         return jsonify({'error': 'URL and output directory required'}), 400
+    
+    if not is_playlist:
+        lower_url = url.lower()
+        if ('playlist' in lower_url or
+            'list=' in lower_url or
+            '/sets/' in lower_url or
+            '/albums/' in lower_url):
+            is_playlist = True
     
     output_dir = output_dir or app.config['DOWNLOAD_FOLDER']
 
@@ -155,7 +171,13 @@ def start_download():
 
     os.makedirs(output_dir, exist_ok=True)
 
-    command = ['yt-dlp', '--continue', '-o', f'{output_dir}/%(title)s.%(ext)s']
+    # Modify output template for playlists
+    if is_playlist:
+        output_template = f'{output_dir}/%(playlist_title)s/%(title)s.%(ext)s'
+    else:
+        output_template = f'{output_dir}/%(title)s.%(ext)s'
+
+    command = ['yt-dlp', '--continue', '-o', output_template]
     
     # Handle different formats
     if format_ in ['mp4', 'mkv', 'webm', 'flv', 'avi']:
@@ -182,21 +204,24 @@ def start_download():
         elif format_ == 'm4a':
             command += ['--audio-format', 'm4a']
 
-    # Add download options
+    # Add download options with automatic embedding
     if download_options.get('description'):
-        command += ['--write-description']
+        command += ['--write-description', '--embed-metadata']
     
     if download_options.get('comments'):
         command += ['--write-comments']
     
     if download_options.get('info_json'):
-        command += ['--write-info-json']
+        command += ['--write-info-json', '--embed-info-json']
     
     if download_options.get('subtitles'):
-        command += ['--write-subs', '--write-auto-subs']
+        command += ['--write-subs', '--write-auto-subs', '--embed-subs']
     
     if download_options.get('thumbnail'):
-        command += ['--write-thumbnail']
+        command += ['--write-thumbnail', '--embed-thumbnail']
+    
+    if download_options.get('sponsorblock') or download_options.get('sponsorblock_remove'):
+        command += ['--sponsorblock-remove', 'all']
 
     if cookies_path:
         command += ['--cookies', cookies_path]
