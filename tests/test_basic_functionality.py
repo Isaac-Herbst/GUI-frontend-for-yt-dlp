@@ -2,6 +2,10 @@ import unittest
 import json
 from app import app
 import io
+import os
+import re
+from app import app, UPLOAD_FOLDER, DOWNLOAD_FOLDER
+from unittest.mock import patch, MagicMock
 
 class BasicFunctionalityTests(unittest.TestCase):
     def setUp(self):
@@ -71,3 +75,84 @@ class BasicFunctionalityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
         self.assertIn('error', data)
+
+    def test_playlist_download_with_partial_failures(self):
+        with patch('app.subprocess.Popen') as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.stdout = iter([
+                "[download] Downloading playlist: PlaylistName",
+                "[download] Playlist PlaylistName: Downloading 3 videos",
+                "[download] Destination: video1.mp4",
+                "ERROR: video2 unavailable",
+                "[download] Destination: video3.mp4",
+                "[DONE]"
+            ])
+            mock_popen.return_value = mock_proc
+
+            playlist_url = 'https://www.youtube.com/playlist?list=PLAYLIST_WITH_ERRORS'
+
+            payload = {
+                "url": playlist_url,
+                "format": "mp4",
+                "output_dir": DOWNLOAD_FOLDER,
+                "cookies_path": "",
+                "download_options": {
+                    "description": False,
+                    "comments": False,
+                    "info_json": True,
+                    "subtitles": False,
+                    "thumbnail": False
+                },
+                "custom_flags": []
+            }
+
+            response = self.client.post('/start_download', json=payload)
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertIn("message", data)
+            self.assertIn("Download started", data["message"])
+
+    def test_playlist_download_outputs_to_playlist_folder(self):
+        with patch('app.subprocess.Popen') as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.stdout = iter([
+                "[download] Downloading playlist: MyPlaylist",
+                "[download] Playlist MyPlaylist: Downloading 2 videos",
+                "[download] Destination: MyPlaylist/video1.mp4",
+                "[download] Destination: MyPlaylist/video2.mp4",
+                "[DONE]"
+            ])
+            mock_popen.return_value = mock_proc
+
+            playlist_url = 'https://www.youtube.com/playlist?list=MY_PLAYLIST'
+
+            payload = {
+                "url": playlist_url,
+                "format": "mp4",
+                "output_dir": DOWNLOAD_FOLDER,
+                "cookies_path": "",
+                "download_options": {},
+                "custom_flags": []
+            }
+
+            response = self.client.post('/start_download', json=payload)
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertIn("message", data)
+            self.assertIn("Download started", data["message"])
+
+            # Check that output template includes playlist folder
+            called_args = mock_popen.call_args[0][0]
+            # Find the '-o' argument index
+            try:
+                o_index = called_args.index('-o')
+                output_template = called_args[o_index + 1]
+            except ValueError:
+                output_template = ""
+
+            # The output template should contain %(playlist_title)s or folder name like 'MyPlaylist/%(title)s.%(ext)s'
+            self.assertTrue(
+                ('%(playlist_title)s' in output_template) or
+                ('MyPlaylist' in output_template),
+                msg=f"Expected output template to include playlist folder but got: {output_template}"
+            )

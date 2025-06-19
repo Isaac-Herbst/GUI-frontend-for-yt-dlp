@@ -17,13 +17,111 @@ app.config['DOWNLOAD_FOLDER'] = DOWNLOAD_FOLDER
 
 log_queue = Queue()
 
+# Helper Functions
+def is_likely_playlist(url):
+    """Helper to determine if a URL likely points to a playlist based on common patterns."""
+    lower_url = url.lower()
+    return ('playlist' in lower_url or 
+            'list=' in lower_url or
+            '/sets/' in lower_url or
+            '/albums/' in lower_url)
+
+def build_format_command(format_type):
+    """
+    Helper to build yt-dlp format-specific command flags.
+    Returns a list of flags based on whether video or audio is requested.
+    """
+    command = []
+    if format_type in ['mp4', 'mkv', 'webm', 'flv', 'avi']:
+        # Video formats
+        if format_type == 'mp4':
+            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mp4']
+        elif format_type == 'mkv':
+            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mkv']
+        elif format_type == 'webm':
+            command += ['-f', 'bestvideo+bestaudio/best[ext=webm]']
+        elif format_type == 'flv':
+            command += ['-f', 'best[ext=flv]']
+        elif format_type == 'avi':
+            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'avi']
+    else:
+        # Audio formats
+        command += ['-x']
+        if format_type == 'mp3':
+            command += ['--audio-format', 'mp3']
+        elif format_type == 'ogg':
+            command += ['--audio-format', 'vorbis']
+        elif format_type == 'aac':
+            command += ['--audio-format', 'aac']
+        elif format_type == 'flac':
+            command += ['--audio-format', 'flac']
+        elif format_type == 'm4a':
+            command += ['--audio-format', 'm4a']
+    return command
+
+def add_download_option_commands(command, download_options, metadata_dir, is_playlist):
+    """
+    Add yt-dlp commands for download options (e.g., metadata).
+    For playlists, metadata_dir is the subfolder inside the playlist folder.
+    """
+    # For playlists, metadata_dir is like output_dir/%(playlist_title)s/%(title)s
+    # For singles, metadata_dir is like output_dir/%(title)s or output_dir (if no metadata folder)
+
+    # Attach --paths only for metadata files, so they go into metadata_dir subfolder
+
+    if download_options.get('description'):
+        command += ['--write-description', '--embed-metadata']
+        command += ['--paths', f'description:{metadata_dir}']
+
+    if download_options.get('comments'):
+        command += ['--write-comments']
+
+    if download_options.get('info_json'):
+        command += ['--write-info-json', '--embed-info-json']
+        command += ['--paths', f'infojson:{metadata_dir}']
+
+    if download_options.get('subtitles'):
+        command += ['--write-subs', '--write-auto-subs', '--embed-subs']
+        command += ['--paths', f'subtitle:{metadata_dir}']
+
+    if download_options.get('thumbnail'):
+        command += ['--write-thumbnail', '--embed-thumbnail']
+        command += ['--paths', f'thumbnail:{metadata_dir}']
+
+    if download_options.get('sponsorblock') or download_options.get('sponsorblock_remove'):
+        command += ['--sponsorblock-remove', 'all']
+
+def deduplicate_command(command):
+    """Helper to remove duplicate flags from the command list while preserving order and arguments."""
+    unique_command = []
+    seen_flags = set()
+    for item in command:
+        if item.startswith('-'):
+            if item not in seen_flags:
+                seen_flags.add(item)
+                unique_command.append(item)
+        else:
+            unique_command.append(item)
+    return unique_command
+
+def build_metadata_dir(output_dir, is_playlist):
+    """
+    Returns metadata directory template path based on playlist/single video.
+    Metadata will be stored in a subfolder named after the video title.
+    """
+    if is_playlist:
+        return f'{output_dir}/%(playlist_title)s/%(title)s/%(title)s'
+    else:
+        return f'{output_dir}/%(title)s/%(title)s'
+
+# Routes
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/browse_directories', methods=['GET'])
 def browse_directories():
-    """Browse server directories for output selection"""
+    """Browse server directories for output selection."""
     path = request.args.get('path', app.config['DOWNLOAD_FOLDER'])
     try:
         if not os.path.exists(path):
@@ -50,7 +148,7 @@ def browse_directories():
 
 @app.route('/validate_url', methods=['POST'])
 def validate_url():
-    """Validate if URL is a supported video platform"""
+    """Validate if URL is a supported video platform."""
     data = request.get_json()
     url = data.get('url', '')
     
@@ -68,12 +166,7 @@ def validate_url():
     ]
     
     is_supported = any(domain in url.lower() for domain in supported_domains)
-    
-    # Check if URL appears to be a playlist
-    is_playlist = ('playlist' in url.lower() or 
-                   'list=' in url.lower() or
-                   '/sets/' in url.lower() or  # SoundCloud sets
-                   '/albums/' in url.lower())  # Various platforms
+    is_playlist = is_likely_playlist(url)
     
     return jsonify({
         'valid': is_supported,
@@ -83,6 +176,7 @@ def validate_url():
 
 @app.route('/upload_cookies', methods=['POST'])
 def upload_cookies():
+    """Handle uploading and processing of cookies files."""
     if 'cookies_file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     file = request.files['cookies_file']
@@ -99,7 +193,6 @@ def upload_cookies():
         if netscape_path is None:
             return jsonify({'error': 'Failed to convert cookies to Netscape format'}), 500
         path = netscape_path
-
     except json.JSONDecodeError:
         pass
     except Exception as e:
@@ -109,6 +202,10 @@ def upload_cookies():
     return jsonify({'message': 'File uploaded', 'path': path}), 200
 
 def convert_to_netscape(file_path, cookies):
+    """
+    Convert JSON cookies to Netscape format for yt-dlp.
+    Writes a new file and returns its path if successful.
+    """
     try:
         netscape_file = os.path.splitext(file_path)[0] + "-netscape.txt"
         with open(netscape_file, 'w') as f:
@@ -132,7 +229,6 @@ def convert_to_netscape(file_path, cookies):
                     cookie.get('name', ''),
                     cookie.get('value', '')
                 ]) + '\n')
-
         return netscape_file
     except Exception as e:
         print(f"Failed to convert cookies: {e}")
@@ -145,91 +241,64 @@ def start_download():
 
     data = request.get_json()
     url = data.get('url')
-    format_ = data.get('format')
+    format_type = data.get('format')
     output_dir = data.get('output_dir')
     cookies_path = data.get('cookies_path')
-    
-    # New download options
     download_options = data.get('download_options', {})
-    is_playlist = data.get('is_playlist', False)
+    is_playlist = data.get('is_playlist', False) or is_likely_playlist(url)
 
     if not url or not output_dir:
         return jsonify({'error': 'URL and output directory required'}), 400
-    
-    if not is_playlist:
-        lower_url = url.lower()
-        if ('playlist' in lower_url or
-            'list=' in lower_url or
-            '/sets/' in lower_url or
-            '/albums/' in lower_url):
-            is_playlist = True
-    
-    output_dir = output_dir or app.config['DOWNLOAD_FOLDER']
 
     if not re.match(r'^https?://', url):
         return jsonify({'error': 'Invalid URL format'}), 400
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Modify output template for playlists
+    # Detect if extra files/metadata are requested either via download_options or custom_flags
+    extra_files_requested = any(download_options.get(opt) for opt in [
+        'description', 'comments', 'info_json', 'subtitles', 'thumbnail', 'sponsorblock', 'sponsorblock_remove'
+    ]) or any(flag in (data.get('custom_flags') or []) for flag in [
+        '--write-description', '--write-info-json', '--write-comments', '--write-subs', '--write-auto-subs',
+        '--write-thumbnail', '--sponsorblock-remove'
+    ])
+
+    # Build output templates and metadata dirs
     if is_playlist:
+        # Media files directly inside playlist folder
         output_template = f'{output_dir}/%(playlist_title)s/%(title)s.%(ext)s'
+        # Metadata files go into subfolders named after each video inside playlist folder
+        metadata_dir = f'{output_dir}/%(playlist_title)s/%(title)s'
+    elif extra_files_requested:
+        # Single video with metadata: all inside video subfolder
+        output_template = f'{output_dir}/%(title)s/%(title)s.%(ext)s'
+        metadata_dir = f'{output_dir}/%(title)s'
     else:
+        # Single video no metadata folder needed, just media files in base folder
         output_template = f'{output_dir}/%(title)s.%(ext)s'
+        metadata_dir = output_dir  # metadata files will be saved alongside video (rare)
 
+    # Build base command
     command = ['yt-dlp', '--continue', '-o', output_template]
-    
-    # Handle different formats
-    if format_ in ['mp4', 'mkv', 'webm', 'flv', 'avi']:
-        if format_ == 'mp4':
-            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mp4']
-        elif format_ == 'mkv':
-            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mkv']
-        elif format_ == 'webm':
-            command += ['-f', 'bestvideo+bestaudio/best[ext=webm]']
-        elif format_ == 'flv':
-            command += ['-f', 'best[ext=flv]']
-        elif format_ == 'avi':
-            command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'avi']
-    else:  # Audio formats
-        command += ['-x']
-        if format_ == 'mp3':
-            command += ['--audio-format', 'mp3']
-        elif format_ == 'ogg':
-            command += ['--audio-format', 'vorbis']
-        elif format_ == 'aac':
-            command += ['--audio-format', 'aac']
-        elif format_ == 'flac':
-            command += ['--audio-format', 'flac']
-        elif format_ == 'm4a':
-            command += ['--audio-format', 'm4a']
 
-    # Add download options with automatic embedding
-    if download_options.get('description'):
-        command += ['--write-description', '--embed-metadata']
-    
-    if download_options.get('comments'):
-        command += ['--write-comments']
-    
-    if download_options.get('info_json'):
-        command += ['--write-info-json', '--embed-info-json']
-    
-    if download_options.get('subtitles'):
-        command += ['--write-subs', '--write-auto-subs', '--embed-subs']
-    
-    if download_options.get('thumbnail'):
-        command += ['--write-thumbnail', '--embed-thumbnail']
-    
-    if download_options.get('sponsorblock') or download_options.get('sponsorblock_remove'):
-        command += ['--sponsorblock-remove', 'all']
+    # Add format-specific commands
+    command += build_format_command(format_type)
 
+    # Add download option commands (including metadata paths)
+    add_download_option_commands(command, download_options, metadata_dir, is_playlist)
+
+    # Add cookies if provided
     if cookies_path:
         command += ['--cookies', cookies_path]
 
+    # Add custom flags and the URL
     custom_flags = data.get('custom_flags', [])
     if isinstance(custom_flags, list):
         command += custom_flags
     command.append(url)
+
+    # Deduplicate flags to prevent issues
+    command = deduplicate_command(command)
 
     def run_command():
         last_percent = -1
@@ -254,6 +323,7 @@ def start_download():
 
 @app.route('/stream_logs')
 def stream_logs():
+    """Stream download logs via Server-Sent Events (SSE)."""
     def generate():
         while True:
             line = log_queue.get()

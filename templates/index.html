@@ -131,6 +131,24 @@
         let isYoutube = false;
         let isPlaylist = false;
 
+        // Format configuration
+        const FORMAT_OPTIONS = {
+            video: [
+                {value: 'mp4', text: 'MP4'},
+                {value: 'mkv', text: 'MKV'},
+                {value: 'webm', text: 'WebM'},
+                {value: 'flv', text: 'FLV'},
+                {value: 'avi', text: 'AVI'}
+            ],
+            audio: [
+                {value: 'mp3', text: 'MP3'},
+                {value: 'ogg', text: 'OGG'},
+                {value: 'aac', text: 'AAC'},
+                {value: 'flac', text: 'FLAC'},
+                {value: 'm4a', text: 'M4A'}
+            ]
+        };
+
         async function uploadCookies() {
             const fileInput = document.getElementById('cookies_file');
             const formData = new FormData();
@@ -162,95 +180,120 @@
             }, { once: true });
         }
 
+        /**
+         * Populate format dropdown based on selected format type
+         */
         function updateFormatOptions() {
             const formatType = document.getElementById('format-type').value;
             const formatSelect = document.getElementById('format');
             
             formatSelect.innerHTML = '';
             
-            if (formatType === 'video') {
-                const videoFormats = [
-                    {value: 'mp4', text: 'MP4'},
-                    {value: 'mkv', text: 'MKV'},
-                    {value: 'webm', text: 'WebM'},
-                    {value: 'flv', text: 'FLV'},
-                    {value: 'avi', text: 'AVI'}
-                ];
-                videoFormats.forEach(format => {
-                    const option = document.createElement('option');
-                    option.value = format.value;
-                    option.textContent = format.text;
-                    formatSelect.appendChild(option);
-                });
-            } else {
-                const audioFormats = [
-                    {value: 'mp3', text: 'MP3'},
-                    {value: 'ogg', text: 'OGG'},
-                    {value: 'aac', text: 'AAC'},
-                    {value: 'flac', text: 'FLAC'},
-                    {value: 'm4a', text: 'M4A'}
-                ];
-                audioFormats.forEach(format => {
-                    const option = document.createElement('option');
-                    option.value = format.value;
-                    option.textContent = format.text;
-                    formatSelect.appendChild(option);
-                });
-            }
+            const formats = FORMAT_OPTIONS[formatType] || FORMAT_OPTIONS.video;
+            formats.forEach(format => {
+                const option = document.createElement('option');
+                option.value = format.value;
+                option.textContent = format.text;
+                formatSelect.appendChild(option);
+            });
         }
 
+        /**
+         * Validate URL and update UI state accordingly
+         */
         async function validateUrl() {
             const url = document.getElementById('url').value.trim();
             const statusDiv = document.getElementById('url-status');
             const optionsDiv = document.getElementById('download-options');
             
             if (!url) {
-                statusDiv.style.display = 'none';
-                optionsDiv.style.display = 'none';
-                urlValid = false;
-                isPlaylist = false;
+                _hideUrlStatus();
                 return;
             }
 
             try {
-                const response = await fetch('/validate_url', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({url: url})
-                });
-                
-                const data = await response.json();
-                statusDiv.style.display = 'block';
-                
-                if (data.valid) {
-                    statusDiv.className = 'url-status url-valid';
-                    let statusText = 'Valid URL detected';
-                    if (data.is_playlist) {
-                        statusText += ' Playlist';
-                    }
-                    statusDiv.textContent = statusText;
-                    urlValid = true;
-                    isYoutube = data.is_youtube;
-                    isPlaylist = data.is_playlist;
-                    
-                    if (isYoutube) {
-                        optionsDiv.style.display = 'block';
-                    }
-                } else {
-                    statusDiv.className = 'url-status url-invalid';
-                    statusDiv.textContent = data.error || 'Invalid or unsupported URL';
-                    urlValid = false;
-                    isPlaylist = false;
-                    optionsDiv.style.display = 'none';
-                }
+                const data = await _fetchUrlValidation(url);
+                _updateUrlStatus(data, statusDiv, optionsDiv);
             } catch (error) {
-                statusDiv.style.display = 'block';
-                statusDiv.className = 'url-status url-invalid';
-                statusDiv.textContent = 'Error validating URL';
-                urlValid = false;
-                isPlaylist = false;
+                _showUrlError(statusDiv, 'Error validating URL');
+            }
+        }
+
+        /**
+         * Helper function to hide URL status elements
+         */
+        function _hideUrlStatus() {
+            document.getElementById('url-status').style.display = 'none';
+            document.getElementById('download-options').style.display = 'none';
+            urlValid = false;
+            isPlaylist = false;
+        }
+
+        /**
+         * Fetch URL validation from server
+         */
+        async function _fetchUrlValidation(url) {
+            const response = await fetch('/validate_url', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url: url})
+            });
+            return await response.json();
+        }
+
+        /**
+         * Update URL status display based on validation results
+         */
+        function _updateUrlStatus(data, statusDiv, optionsDiv) {
+            statusDiv.style.display = 'block';
+            
+            if (data.valid) {
+                statusDiv.className = 'url-status url-valid';
+                let statusText = 'Valid URL detected';
+                if (data.is_playlist) {
+                    statusText += ' (Playlist)';
+                }
+                statusDiv.textContent = statusText;
+                
+                urlValid = true;
+                isYoutube = data.is_youtube;
+                isPlaylist = data.is_playlist;
+                
+                if (isYoutube) {
+                    optionsDiv.style.display = 'block';
+                }
+            } else {
+                _showUrlError(statusDiv, data.error || 'Invalid or unsupported URL');
                 optionsDiv.style.display = 'none';
             }
+        }
+
+        /**
+         * Display URL validation error
+         */
+        function _showUrlError(statusDiv, message) {
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'url-status url-invalid';
+            statusDiv.textContent = message;
+            urlValid = false;
+            isPlaylist = false;
+            document.getElementById('download-options').style.display = 'none';
+        }
+
+        /**
+         * Collect download options from form checkboxes
+         */
+        function _getDownloadOptions() {
+            if (!isYoutube) return {};
+            
+            return {
+                description: document.getElementById('opt-description').checked,
+                comments: document.getElementById('opt-comments').checked,
+                info_json: document.getElementById('opt-info').checked,
+                subtitles: document.getElementById('opt-subtitles').checked,
+                thumbnail: document.getElementById('opt-thumbnail').checked,
+                sponsorblock: document.getElementById('opt-sponsorblock').checked
+            };
         }
 
         async function toggleDirectoryBrowser() {
@@ -305,69 +348,88 @@
             document.getElementById('directory-browser').style.display = 'none';
         }
 
+        /**
+         * Initialize download and set up progress monitoring
+         */
         async function startDownload() {
             if (!urlValid) {
                 alert('Please enter a valid URL first');
                 return;
             }
 
-            const url = document.getElementById('url').value;
-            const format = document.getElementById('format').value;
-            const output_dir = document.getElementById('output_dir').value || '/downloads';
-            
-            const downloadOptions = {};
-            if (isYoutube) {
-                downloadOptions.description = document.getElementById('opt-description').checked;
-                downloadOptions.comments = document.getElementById('opt-comments').checked;
-                downloadOptions.info_json = document.getElementById('opt-info').checked;
-                downloadOptions.subtitles = document.getElementById('opt-subtitles').checked;
-                downloadOptions.thumbnail = document.getElementById('opt-thumbnail').checked;
-                downloadOptions.sponsorblock = document.getElementById('opt-sponsorblock').checked;
-            }
+            const downloadData = {
+                url: document.getElementById('url').value,
+                format: document.getElementById('format').value,
+                output_dir: document.getElementById('output_dir').value || '/downloads',
+                cookies_path: cookiesPath,
+                download_options: _getDownloadOptions(),
+                is_playlist: isPlaylist,
+                custom_flags: Array.isArray(window.customFlags) ? window.customFlags : []
+            };
 
-            const res = await fetch('/start_download', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    url, 
-                    format, 
-                    output_dir, 
-                    cookies_path: cookiesPath,
-                    download_options: downloadOptions,
-                    is_playlist: isPlaylist,
-                    custom_flags: Array.isArray(window.customFlags) ? window.customFlags : []
-                })
-            });
+            try {
+                const response = await fetch('/start_download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(downloadData)
+                });
 
-            const data = await res.json();
-            alert(data.message || data.error);
-            if (data.message) {
-                const log = document.getElementById("log");
-                const evtSource = new EventSource('/stream_logs');
-                log.textContent = '';
-                evtSource.onmessage = function(e) {
-                    if (e.data === '[DONE]') {
-                        evtSource.close();
-                        document.getElementById('speed_eta').innerText = 'Download complete!';
-                        return;
-                    }
-
-                    if (e.data.startsWith("PROGRESS::")) {
-                        const [_, percent, speed, eta] = e.data.split("::");
-                        const bar = document.getElementById("progress-bar");
-                        bar.style.width = `${percent}%`;
-                        bar.innerText = `${Math.floor(percent)}%`;
-                        document.getElementById("speed_eta").innerText = `Speed: ${speed}, ETA: ${eta}`;
-                    } else if (e.data.startsWith("INFO::")) {
-                        const log = document.getElementById("log");
-                        log.textContent += e.data.replace("INFO::", "") + "\n";
-                        log.scrollTop = log.scrollHeight;
-                    }
-                };
+                const data = await response.json();
+                alert(data.message || data.error);
+                
+                if (data.message) {
+                    _setupProgressMonitoring();
+                }
+            } catch (error) {
+                alert('Error starting download: ' + error.message);
             }
         }
 
-        // Initialize format options on page load
+        /**
+         * Set up EventSource for real-time progress monitoring
+         */
+        function _setupProgressMonitoring() {
+            const log = document.getElementById("log");
+            const evtSource = new EventSource('/stream_logs');
+            
+            log.textContent = '';
+            
+            evtSource.onmessage = function(e) {
+                if (e.data === '[DONE]') {
+                    evtSource.close();
+                    document.getElementById('speed_eta').innerText = 'Download complete!';
+                    return;
+                }
+
+                if (e.data.startsWith("PROGRESS::")) {
+                    _updateProgressBar(e.data);
+                } else if (e.data.startsWith("INFO::")) {
+                    _updateLogDisplay(e.data);
+                }
+            };
+        }
+
+        /**
+         * Update progress bar with download progress
+         */
+        function _updateProgressBar(progressData) {
+            const [_, percent, speed, eta] = progressData.split("::");
+            const bar = document.getElementById("progress-bar");
+            bar.style.width = `${percent}%`;
+            bar.innerText = `${Math.floor(percent)}%`;
+            document.getElementById("speed_eta").innerText = `Speed: ${speed}, ETA: ${eta}`;
+        }
+
+        /**
+         * Update log display with new information
+         */
+        function _updateLogDisplay(infoData) {
+            const log = document.getElementById("log");
+            log.textContent += infoData.replace("INFO::", "") + "\n";
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Initialize application
         updateFormatOptions();
         
         // Set default output directory

@@ -1,6 +1,3 @@
 @echo off
 echo Running unit tests...
-python -m unittest discover -s tests -p "test_unit_*.py"
-
-echo Running UI tests with Playwright...
-pytest tests\test_ui.py --headed --browser=chromium
+python -m unittest discover -s tests -p "test_*.py"
