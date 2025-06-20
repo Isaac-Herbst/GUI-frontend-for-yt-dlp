@@ -6,6 +6,7 @@ from threading import Thread
 from queue import Queue
 from werkzeug.utils import secure_filename
 import json
+import shutil
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads/cookies'
@@ -14,6 +15,9 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['DOWNLOAD_FOLDER'] = DOWNLOAD_FOLDER
+
+# Used for a couple helper functions, mainly for parsing metadata files
+MEDIA_EXTENSIONS = {'.mp4', '.webm', '.mkv', '.flv', '.avi', '.mp3', '.m4a', '.ogg', '.aac', '.flac'}
 
 log_queue = Queue()
 
@@ -33,7 +37,6 @@ def build_format_command(format_type):
     """
     command = []
     if format_type in ['mp4', 'mkv', 'webm', 'flv', 'avi']:
-        # Video formats
         if format_type == 'mp4':
             command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'mp4']
         elif format_type == 'mkv':
@@ -45,7 +48,6 @@ def build_format_command(format_type):
         elif format_type == 'avi':
             command += ['-f', 'bestvideo+bestaudio', '--merge-output-format', 'avi']
     else:
-        # Audio formats
         command += ['-x']
         if format_type == 'mp3':
             command += ['--audio-format', 'mp3']
@@ -114,6 +116,67 @@ def build_metadata_dir(output_dir, is_playlist):
     else:
         return f'{output_dir}/%(title)s/%(title)s'
 
+def is_media_file(filename):
+    """
+    Helper function for determining while filetype the current file is.
+    """
+    _, ext = os.path.splitext(filename)
+    return ext.lower() in MEDIA_EXTENSIONS
+
+def move_media_files_up_and_metadata_down(base_dir):
+    """
+    Organize files so that:
+    - Media files are moved up from video-named subfolders to base_dir.
+    - Metadata files (including comment files with suffixes) are moved into their respective video-named subfolders.
+    """
+
+    # Move media files up from video-named subfolders to base_dir
+    for entry in os.listdir(base_dir):
+        entry_path = os.path.join(base_dir, entry)
+        if os.path.isdir(entry_path):
+            for media_ext in MEDIA_EXTENSIONS:
+                candidate = os.path.join(entry_path, f"{entry}{media_ext}")
+                if os.path.exists(candidate):
+                    target_path = os.path.join(base_dir, f"{entry}{media_ext}")
+                    if not os.path.exists(target_path):
+                        try:
+                            shutil.move(candidate, target_path)
+                            print(f"Moved media file {candidate} -> {target_path}")
+                        except Exception as e:
+                            print(f"Error moving media file {candidate}: {e}")
+                    else:
+                        print(f"Target media file already exists: {target_path}")
+
+    # Move all non-media files into their video-named subfolders
+    media_base_names = {
+        os.path.splitext(f)[0]
+        for f in os.listdir(base_dir)
+        if is_media_file(f)
+    }
+
+    for file in os.listdir(base_dir):
+        file_path = os.path.join(base_dir, file)
+
+        if os.path.isdir(file_path) or is_media_file(file):
+            continue  # skip folders and media files
+
+        # Try to find the matching media base name
+        moved = False
+        for base_name in media_base_names:
+            if file.startswith(base_name):
+                target_folder = os.path.join(base_dir, base_name)
+                os.makedirs(target_folder, exist_ok=True)
+                try:
+                    shutil.move(file_path, os.path.join(target_folder, file))
+                    print(f"Moved metadata file {file} -> {target_folder}")
+                    moved = True
+                except Exception as e:
+                    print(f"Error moving metadata file {file}: {e}")
+                break
+
+        if not moved:
+            print(f"Did not move metadata file (no matching media found): {file}")
+
 # Routes
 @app.route('/')
 def index():
@@ -155,11 +218,9 @@ def validate_url():
     if not url:
         return jsonify({'valid': False, 'error': 'No URL provided'})
     
-    # Basic URL validation
     if not re.match(r'^https?://', url):
         return jsonify({'valid': False, 'error': 'Invalid URL format'})
     
-    # Check if it's a supported platform (basic check)
     supported_domains = [
         'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com',
         'twitch.tv', 'facebook.com', 'instagram.com', 'tiktok.com'
@@ -255,7 +316,6 @@ def start_download():
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Detect if extra files/metadata are requested either via download_options or custom_flags
     extra_files_requested = any(download_options.get(opt) for opt in [
         'description', 'comments', 'info_json', 'subtitles', 'thumbnail', 'sponsorblock', 'sponsorblock_remove'
     ]) or any(flag in (data.get('custom_flags') or []) for flag in [
@@ -263,41 +323,44 @@ def start_download():
         '--write-thumbnail', '--sponsorblock-remove'
     ])
 
-    # Build output templates and metadata dirs
     if is_playlist:
-        # Media files directly inside playlist folder
         output_template = f'{output_dir}/%(playlist_title)s/%(title)s.%(ext)s'
-        # Metadata files go into subfolders named after each video inside playlist folder
         metadata_dir = f'{output_dir}/%(playlist_title)s/%(title)s'
     elif extra_files_requested:
-        # Single video with metadata: all inside video subfolder
         output_template = f'{output_dir}/%(title)s/%(title)s.%(ext)s'
         metadata_dir = f'{output_dir}/%(title)s'
     else:
-        # Single video no metadata folder needed, just media files in base folder
         output_template = f'{output_dir}/%(title)s.%(ext)s'
-        metadata_dir = output_dir  # metadata files will be saved alongside video (rare)
+        metadata_dir = output_dir
 
-    # Build base command
     command = ['yt-dlp', '--continue', '-o', output_template]
-
-    # Add format-specific commands
     command += build_format_command(format_type)
 
-    # Add download option commands (including metadata paths)
+    custom_flags = data.get('custom_flags', [])
+
+    # Infer download_options from custom_flags if not explicitly set
+    if '--write-description' in custom_flags:
+        download_options['description'] = True
+    if '--write-info-json' in custom_flags:
+        download_options['info_json'] = True
+    if '--write-comments' in custom_flags:
+        download_options['comments'] = True
+    if '--write-subs' in custom_flags or '--write-auto-subs' in custom_flags:
+        download_options['subtitles'] = True
+    if '--write-thumbnail' in custom_flags:
+        download_options['thumbnail'] = True
+    if '--sponsorblock-remove' in custom_flags:
+        download_options['sponsorblock'] = True
+
     add_download_option_commands(command, download_options, metadata_dir, is_playlist)
 
-    # Add cookies if provided
     if cookies_path:
         command += ['--cookies', cookies_path]
 
-    # Add custom flags and the URL
-    custom_flags = data.get('custom_flags', [])
     if isinstance(custom_flags, list):
         command += custom_flags
     command.append(url)
 
-    # Deduplicate flags to prevent issues
     command = deduplicate_command(command)
 
     def run_command():
@@ -317,6 +380,17 @@ def start_download():
                 if "[ffmpeg]" in line or "Destination" in line or "[info]" in line:
                     log_queue.put(f"INFO::{line.strip()}")
         log_queue.put('[DONE]')
+        try:
+            if is_playlist:
+                # Look for playlist folder (usually one folder in output_dir)
+                playlist_subfolders = [f for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f))]
+                for folder in playlist_subfolders:
+                    folder_path = os.path.join(output_dir, folder)
+                    move_media_files_up_and_metadata_down(folder_path)
+            else:
+                move_media_files_up_and_metadata_down(output_dir)
+        except Exception as e:
+            print(f"Error organizing metadata files: {e}")
 
     Thread(target=run_command, daemon=True).start()
     return jsonify({'message': 'Download started'}), 200

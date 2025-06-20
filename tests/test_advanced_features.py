@@ -16,43 +16,6 @@ class AdvancedFeatureTests(unittest.TestCase):
         if os.path.exists(self.video_folder):
             shutil.rmtree(self.video_folder)  # clean up after test
 
-    def test_custom_flag_creates_subfolder_for_extra_files(self):
-        payload = {
-            "url": "https://www.youtube.com/watch?v=video123",
-            "format": "mp4",
-            "output_dir": DOWNLOAD_FOLDER,
-            "cookies_path": "",
-            "download_options": {},
-            "custom_flags": ["--write-description", "--write-info-json"]
-        }
-
-        # Simulated yt-dlp output that would include extra files
-        mock_lines = [
-            f"[download] Destination: {self.video_title}/video.mp4",
-            f"[info] Writing video description to: {self.video_title}/{self.video_title}.description",
-            f"[info] Writing metadata to: {self.video_title}/{self.video_title}.info.json",
-            "[DONE]"
-        ]
-
-        with patch('app.subprocess.Popen') as mock_popen:
-            mock_proc = MagicMock()
-            mock_proc.stdout = iter(mock_lines)
-            mock_popen.return_value = mock_proc
-
-            response = self.client.post('/start_download', json=payload)
-            self.assertEqual(response.status_code, 200)
-            self.assertIn("Download started", response.get_json()["message"])
-
-            called_args = mock_popen.call_args[0][0]
-            output_path_flag_index = called_args.index('-o')
-            output_template = called_args[output_path_flag_index + 1]
-
-            if any(flag in payload['custom_flags'] for flag in ["--write-description", "--write-info-json"]):
-                self.assertIn('%(title)s/%(title)s.%(ext)s', output_template,
-                              msg="Output template should save to subfolder when extra files are requested")
-            else:
-                self.assertEqual(output_template, f'{DOWNLOAD_FOLDER}/%(title)s.%(ext)s')
-
     def test_partial_download_failure(self):
         payload = {
             "url": "https://www.youtube.com/playlist?list=PARTIAL_FAIL",
@@ -102,3 +65,81 @@ class AdvancedFeatureTests(unittest.TestCase):
 
             called_args = mock_popen.call_args[0][0]
             self.assertEqual(called_args.count("--write-description"), 1)
+
+    def test_single_video_has_separate_metadata_folder(self):
+        payload = {
+            "url": "https://www.youtube.com/watch?v=video123",
+            "format": "mp4",
+            "output_dir": DOWNLOAD_FOLDER,
+            "cookies_path": "",
+            "download_options": {},
+            "custom_flags": ["--write-description", "--write-info-json"]
+        }
+
+        # Simulated yt-dlp output
+        mock_lines = [
+            f"[download] Destination: {DOWNLOAD_FOLDER}/Video1.mp4",
+            f"[info] Writing video description to: {DOWNLOAD_FOLDER}/Video1/Video1.description",
+            f"[info] Writing metadata to: {DOWNLOAD_FOLDER}/Video1/Video1.info.json",
+            "[DONE]"
+        ]
+
+        with patch('app.subprocess.Popen') as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.stdout = iter(mock_lines)
+            mock_popen.return_value = mock_proc
+
+            response = self.client.post('/start_download', json=payload)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Download started", response.get_json()["message"])
+
+            # Validate correct output structure in command
+            called_args = mock_popen.call_args[0][0]
+            output_flag_index = called_args.index('-o')
+            output_template = called_args[output_flag_index + 1]
+
+            self.assertEqual(output_template, f'{DOWNLOAD_FOLDER}/%(title)s/%(title)s.%(ext)s')
+            self.assertIn('--paths', called_args)
+            self.assertIn(f'description:{DOWNLOAD_FOLDER}/%(title)s', called_args)
+            self.assertIn(f'infojson:{DOWNLOAD_FOLDER}/%(title)s', called_args)
+
+    def test_playlist_video_has_separate_metadata_folders(self):
+        payload = {
+            "url": "https://www.youtube.com/playlist?list=xyz123",
+            "format": "mp4",
+            "output_dir": DOWNLOAD_FOLDER,
+            "cookies_path": "",
+            "download_options": {},
+            "custom_flags": ["--write-description", "--write-info-json"]
+        }
+
+        # Simulated yt-dlp output
+        mock_lines = [
+            f"[download] Destination: {DOWNLOAD_FOLDER}/Playlist1/Video2.mp4",
+            f"[info] Writing video description to: {DOWNLOAD_FOLDER}/Playlist1/Video2/Video2.description",
+            f"[info] Writing metadata to: {DOWNLOAD_FOLDER}/Playlist1/Video2/Video2.info.json",
+            f"[download] Destination: {DOWNLOAD_FOLDER}/Playlist1/Video3.mp4",
+            f"[info] Writing video description to: {DOWNLOAD_FOLDER}/Playlist1/Video3/Video3.description",
+            f"[info] Writing metadata to: {DOWNLOAD_FOLDER}/Playlist1/Video3/Video3.info.json",
+            f"[info] Writing playlist metadata to: {DOWNLOAD_FOLDER}/Playlist1/Playlist1.description",
+            "[DONE]"
+        ]
+
+        with patch('app.subprocess.Popen') as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.stdout = iter(mock_lines)
+            mock_popen.return_value = mock_proc
+
+            response = self.client.post('/start_download', json=payload)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Download started", response.get_json()["message"])
+
+            # Validate correct output structure in command
+            called_args = mock_popen.call_args[0][0]
+            output_flag_index = called_args.index('-o')
+            output_template = called_args[output_flag_index + 1]
+
+            self.assertEqual(output_template, f'{DOWNLOAD_FOLDER}/%(playlist_title)s/%(title)s.%(ext)s')
+            self.assertIn('--paths', called_args)
+            self.assertIn(f'description:{DOWNLOAD_FOLDER}/%(playlist_title)s/%(title)s', called_args)
+            self.assertIn(f'infojson:{DOWNLOAD_FOLDER}/%(playlist_title)s/%(title)s', called_args)
